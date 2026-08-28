@@ -7,7 +7,7 @@ name = "smart-file-sync"
 version = "0.1.0"
 description = "A lightweight Python utility for safely synchronizing files between two directories."
 readme = "README.md"
-license = { text = "MIT" }
+license = "AGPL-3.0-only"
 requires-python = ">=3.10"
 authors = [
     { name = "yaniishsn" },

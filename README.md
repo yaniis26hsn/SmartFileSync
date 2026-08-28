@@ -296,4 +296,6 @@ The suite covers the CLI, synchronization logic, comparator, hasher, duplicate d
 
 ## License
 
-This project is licensed under the MIT License.
+This project is licensed under the **GNU Affero General Public License v3.0** (AGPL-3.0). See the [LICENSE](LICENSE) file for the full terms.
+
+The AGPL-3.0 is a strong copyleft license. If you modify the software and make it available to users over a network, you must offer them access to the corresponding source code.
