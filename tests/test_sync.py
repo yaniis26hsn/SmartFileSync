@@ -209,3 +209,28 @@ class TestSourceValidation:
         file_source = _write_text(tmp_path / "A", "i am a file")
         with pytest.raises(NotADirectoryError):
             sync(file_source, tmp_path / "B")
+
+
+class TestNestedDirectories:
+    def test_destination_inside_source_raises(self, tmp_path: Path) -> None:
+        a = tmp_path / "A"
+        a.mkdir()
+        _write_text(a / "f.txt", "x")
+        nested_dest = a / "backup"
+        with pytest.raises(ValueError, match="nested"):
+            sync(a, nested_dest)
+
+    def test_source_inside_destination_raises(self, tmp_path: Path) -> None:
+        outer = tmp_path / "outer"
+        inner = outer / "inner"
+        _write_text(outer / "root.txt", "x")
+        _write_text(inner / "f.txt", "y")
+        with pytest.raises(ValueError, match="nested"):
+            sync(inner, outer)
+
+    def test_sibling_directories_work(self, tmp_path: Path) -> None:
+        a = tmp_path / "A"
+        b = tmp_path / "B"
+        _write_text(a / "f.txt", "x")
+        actions = sync(a, b)
+        assert actions[0].status == SyncStatus.COPY

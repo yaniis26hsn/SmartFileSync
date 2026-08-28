@@ -14,6 +14,7 @@ from typing import Callable
 
 from smart_file_sync.hasher import sha256_file
 from smart_file_sync.operations import delete_file
+from smart_file_sync.pathutil import paths_are_nested, walk_files
 
 
 @dataclass(frozen=True)
@@ -51,20 +52,8 @@ class DedupeOutcome:
 
 
 def _iter_files(root: Path) -> list[Path]:
-    """Return all regular files under root, skipping unreadable entries."""
-    try:
-        if not root.is_dir():
-            return []
-    except OSError:
-        return []
-    files: list[Path] = []
-    for item in root.rglob("*"):
-        try:
-            if item.is_file():
-                files.append(item)
-        except OSError:
-            continue
-    return files
+    """Return all regular files under root, skipping symlinks and unreadable entries."""
+    return walk_files(root)
 
 
 def find_duplicates(source: Path, destination: Path) -> list[DuplicateMatch]:
@@ -72,7 +61,7 @@ def find_duplicates(source: Path, destination: Path) -> list[DuplicateMatch]:
 
     Only files sharing the same size are ever hashed. Each file is hashed at
     most once. A source file is reported as a duplicate only when a destination
-    file with identical content exists.
+    file with identical content exists. Symlinks are never followed.
 
     Args:
         source: Root of the source directory.
@@ -81,7 +70,16 @@ def find_duplicates(source: Path, destination: Path) -> list[DuplicateMatch]:
     Returns:
         A list of DuplicateMatch for every source file that duplicates the
         content of a destination file.
+
+    Raises:
+        ValueError: If ``source`` and ``destination`` are the same or nested.
     """
+    if paths_are_nested(source, destination):
+        raise ValueError(
+            "Source and destination directories must not be the same or nested: "
+            f"{source}, {destination}"
+        )
+
     by_size: dict[int, list[tuple[str, Path]]] = {}
     for kind, root in (("source", source), ("dest", destination)):
         for path in _iter_files(root):

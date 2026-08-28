@@ -6,6 +6,7 @@ from pathlib import Path
 
 from smart_file_sync.comparator import CompareResult, _compare
 from smart_file_sync.operations import copy_file, delete_file
+from smart_file_sync.pathutil import paths_are_nested, walk_files
 
 
 class SyncStatus:
@@ -42,21 +43,15 @@ class SyncAction:
 
 
 def _collect_files(source: Path) -> list[Path]:
-    """Return candidate paths under source, skipping unreadable entries.
+    """Return candidate paths under source, skipping symlinks and unreadable entries.
 
     Args:
         source: Root directory to walk.
 
     Returns:
-        A list of paths, which may include directories (skipped later).
+        A sorted list of regular file paths (symlinks are not followed).
     """
-    entries: list[Path] = []
-    try:
-        for candidate in source.rglob("*"):
-            entries.append(candidate)
-    except OSError:
-        pass
-    return entries
+    return walk_files(source)
 
 
 def sync(source: Path, destination: Path, dry_run: bool = False) -> list[SyncAction]:
@@ -76,7 +71,8 @@ def sync(source: Path, destination: Path, dry_run: bool = False) -> list[SyncAct
 
     A source file is deleted only when the comparison returned ``IDENTICAL``,
     which requires successful stat and hashing of both files. One problematic
-    file does not stop unrelated files from being processed.
+    file does not stop unrelated files from being processed. Symlinks are never
+    followed.
 
     Args:
         source: Path to the source directory (A).
@@ -90,11 +86,18 @@ def sync(source: Path, destination: Path, dry_run: bool = False) -> list[SyncAct
     Raises:
         FileNotFoundError: If the source directory does not exist.
         NotADirectoryError: If ``source`` exists but is not a directory.
+        ValueError: If ``source`` and ``destination`` are the same or nested.
     """
     if not source.exists():
         raise FileNotFoundError(f"Source directory does not exist: {source}")
     if not source.is_dir():
         raise NotADirectoryError(f"Source is not a directory: {source}")
+
+    if paths_are_nested(source, destination):
+        raise ValueError(
+            "Source and destination directories must not be the same or nested: "
+            f"{source}, {destination}"
+        )
 
     actions: list[SyncAction] = []
     for item in _collect_files(source):

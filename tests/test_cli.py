@@ -77,6 +77,14 @@ class TestValidation:
         d = _make_dir(tmp_path / "A")
         assert _validate(d, tmp_path / "B") is None
 
+    def test_destination_nested_inside_source(self, tmp_path: Path) -> None:
+        d = _make_dir(tmp_path / "A")
+        assert _validate(d, d / "backup") is not None
+
+    def test_source_nested_inside_destination(self, tmp_path: Path) -> None:
+        outer = _make_dir(tmp_path / "outer")
+        assert _validate(outer / "inner", outer) is not None
+
 
 class TestFormatAction:
     def _action(
@@ -144,6 +152,13 @@ class TestRunExitCodes:
         code = run([str(d), str(d)])
         assert code == EXIT_ERROR
         assert "same directory" in capsys.readouterr().err
+
+    def test_nested_directory_exits_error(self, tmp_path: Path, capsys) -> None:
+        a = _make_dir(tmp_path / "A")
+        code = run([str(a), str(a / "backup")])
+        captured = capsys.readouterr()
+        assert code == EXIT_ERROR
+        assert "nested" in captured.err
 
     def test_successful_sync_exits_ok(self, tmp_path: Path, capsys) -> None:
         a = _make_dir(tmp_path / "A")

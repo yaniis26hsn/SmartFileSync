@@ -13,6 +13,7 @@ from smart_file_sync.dedupe import (
     DuplicateMatch,
     delete_duplicates,
 )
+from smart_file_sync.pathutil import paths_are_nested
 from smart_file_sync.sync import SyncAction, SyncStatus, sync
 
 EXIT_OK = 0
@@ -89,6 +90,11 @@ def _validate(source: Path, destination: Path) -> str | None:
         same = False
     if same:
         return f"Source and destination resolve to the same directory: {source}"
+    if paths_are_nested(source, destination):
+        return (
+            "Source and destination directories must not be nested one inside "
+            f"the other: {source}, {destination}"
+        )
     return None
 
 

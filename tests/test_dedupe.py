@@ -202,3 +202,26 @@ class TestHashFailure:
         )
         assert outcomes == []
         assert src.exists()
+
+
+class TestDedupeNestedRoots:
+    def test_destination_inside_source_raises(self, tmp_path: Path) -> None:
+        a = tmp_path / "A"
+        a.mkdir()
+        _write_text(a / "f.txt", "x")
+        with pytest.raises(ValueError, match="nested"):
+            find_duplicates(a, a / "backup")
+
+    def test_delete_duplicates_raises_on_nested_roots(self, tmp_path: Path) -> None:
+        a = tmp_path / "A"
+        a.mkdir()
+        _write_text(a / "x.jpg", "same")
+        _write_text(a / "backup" / "x.jpg", "same")
+        with pytest.raises(ValueError, match="nested"):
+            delete_duplicates(a, a / "backup", confirm=lambda m: True)
+
+    def test_sibling_roots_produce_match(self, tmp_path: Path) -> None:
+        _write_text(tmp_path / "A" / "photo1.jpg", "same bytes")
+        _write_text(tmp_path / "B" / "photo2.jpg", "same bytes")
+        matches = find_duplicates(tmp_path / "A", tmp_path / "B")
+        assert len(matches) == 1
