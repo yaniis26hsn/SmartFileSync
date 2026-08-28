@@ -1,10 +1,10 @@
-"""Unit tests for the core A -> B synchronization logic."""
+"""Unit tests for the core A -> B synchronization logic and dry-run safety."""
 
 from pathlib import Path
 
 import pytest
 
-from smart_file_sync.sync import SyncAction, sync
+from smart_file_sync.sync import SyncAction, SyncStatus, sync
 
 
 def _write(path: Path, data: bytes) -> Path:
@@ -19,6 +19,17 @@ def _write_text(path: Path, text: str) -> Path:
     return path
 
 
+def _snapshot(root: Path) -> dict[Path, bytes]:
+    """Return a map of relative path -> contents for all files under root."""
+    snap: dict[Path, bytes] = {}
+    if not root.exists():
+        return snap
+    for p in sorted(root.rglob("*")):
+        if p.is_file():
+            snap[p.relative_to(root)] = p.read_bytes()
+    return snap
+
+
 class TestNewFiles:
     def test_copies_file_to_destination(self, tmp_path: Path) -> None:
         src = _write_text(tmp_path / "A" / "document.pdf", "content")
@@ -29,7 +40,7 @@ class TestNewFiles:
         assert src.exists()
         assert len(actions) == 1
         assert actions[0].relative_path == Path("document.pdf")
-        assert "COPY" in actions[0].action
+        assert actions[0].status == SyncStatus.COPY
         assert not actions[0].is_delete
 
     def test_preserves_relative_directory_structure(self, tmp_path: Path) -> None:
@@ -38,15 +49,6 @@ class TestNewFiles:
         sync(tmp_path / "A", dest_dir)
 
         assert dest_dir.joinpath("sub", "nested", "file.txt").read_text() == "deep"
-
-    def test_dry_run_copies_nothing(self, tmp_path: Path) -> None:
-        _write_text(tmp_path / "A" / "doc.pdf", "content")
-        dest_dir = tmp_path / "B"
-        actions = sync(tmp_path / "A", dest_dir, dry_run=True)
-
-        assert not dest_dir.exists()
-        assert len(actions) == 1
-        assert "COPY" in actions[0].action
 
 
 class TestIdenticalFiles:
@@ -58,8 +60,8 @@ class TestIdenticalFiles:
         assert not src.exists()
         assert dst.read_text() == "same data"
         assert len(actions) == 1
+        assert actions[0].status == SyncStatus.IDENTICAL
         assert actions[0].is_delete is True
-        assert "DELETE" in actions[0].action
 
     def test_identical_in_nested_directory(self, tmp_path: Path) -> None:
         src = _write(tmp_path / "A" / "sub" / "img.png", b"\x01\x02\x03")
@@ -71,13 +73,14 @@ class TestIdenticalFiles:
         assert actions[0].relative_path == Path("sub") / "img.png"
         assert actions[0].is_delete
 
-    def test_dry_run_deletes_nothing(self, tmp_path: Path) -> None:
+    def test_dry_run_marks_delete_but_does_not_delete(self, tmp_path: Path) -> None:
         src = _write_text(tmp_path / "A" / "f.txt", "same")
         _write_text(tmp_path / "B" / "f.txt", "same")
         actions = sync(tmp_path / "A", tmp_path / "B", dry_run=True)
 
         assert src.exists()
         assert len(actions) == 1
+        assert actions[0].status == SyncStatus.IDENTICAL
         assert actions[0].is_delete is True
 
 
@@ -90,9 +93,8 @@ class TestDifferentFiles:
         assert src.exists()
         assert dst.read_text() == "a much longer destination"
         assert len(actions) == 1
-        assert "DIFFERENT" in actions[0].action
+        assert actions[0].status == SyncStatus.CONFLICT
         assert not actions[0].is_delete
-        assert "CONFLICT" in actions[0].action
 
     def test_different_content_same_size_keeps_both(self, tmp_path: Path) -> None:
         src = _write_text(tmp_path / "A" / "f.txt", "AAAA")
@@ -125,6 +127,55 @@ class TestNoCrossNameDedup:
         assert (tmp_path / "B" / "extra_only_in_b.txt").exists()
 
 
+class TestDryRunSafety:
+    def test_dry_run_leaves_both_directories_unchanged(self, tmp_path: Path) -> None:
+        a = tmp_path / "A"
+        b = tmp_path / "B"
+        _write_text(a / "new.txt", "new content")
+        _write_text(a / "same.txt", "identical")
+        _write(a / "binary.dat", b"\x00\x01\x02")
+        _write_text(a / "sub" / "nested" / "deep.txt", "deep file")
+        _write_text(a / "conflict.txt", "source version")
+        _write_text(b / "same.txt", "identical")
+        _write_text(b / "conflict.txt", "dest version")
+
+        before_a = _snapshot(a)
+        before_b = _snapshot(b)
+
+        actions = sync(a, b, dry_run=True)
+
+        assert _snapshot(a) == before_a
+        assert _snapshot(b) == before_b
+
+        statuses = {act.status for act in actions}
+        assert SyncStatus.COPY in statuses
+        assert SyncStatus.IDENTICAL in statuses
+        assert SyncStatus.CONFLICT in statuses
+
+    def test_dry_run_does_not_create_destination_directory(self, tmp_path: Path) -> None:
+        _write_text(tmp_path / "A" / "file.txt", "content")
+        dest_dir = tmp_path / "B"
+        sync(tmp_path / "A", dest_dir, dry_run=True)
+
+        assert not dest_dir.exists()
+
+    def test_dry_run_does_not_copy_nested_structure(self, tmp_path: Path) -> None:
+        _write_text(tmp_path / "A" / "sub" / "file.txt", "content")
+        dest_dir = tmp_path / "B"
+        sync(tmp_path / "A", dest_dir, dry_run=True)
+
+        assert not dest_dir.exists()
+
+    def test_dry_run_reports_copy_for_new_file(self, tmp_path: Path) -> None:
+        _write_text(tmp_path / "A" / "doc.pdf", "content")
+        dest_dir = tmp_path / "B"
+        actions = sync(tmp_path / "A", dest_dir, dry_run=True)
+
+        assert len(actions) == 1
+        assert actions[0].status == SyncStatus.COPY
+        assert not actions[0].is_delete
+
+
 class TestMixedScenario:
     def test_mixed_actions(self, tmp_path: Path) -> None:
         a = tmp_path / "A"
@@ -137,12 +188,24 @@ class TestMixedScenario:
 
         actions = sync(a, b)
 
-        actions_by_name = {a.relative_path.name: a.action for a in actions}
-        assert "DELETE" in actions_by_name["same.txt"]
-        assert "DIFFERENT" in actions_by_name["conflict.txt"]
-        assert "COPY" in actions_by_name["new.txt"]
+        actions_by_name = {act.relative_path.name: act.status for act in actions}
+        assert actions_by_name["same.txt"] == SyncStatus.IDENTICAL
+        assert actions_by_name["conflict.txt"] == SyncStatus.CONFLICT
+        assert actions_by_name["new.txt"] == SyncStatus.COPY
 
         assert not (a / "same.txt").exists()
         assert (a / "conflict.txt").exists()
         assert (b / "conflict.txt").read_text() == "destination version"
         assert (b / "new.txt").read_text() == "brand new"
+
+
+class TestSourceValidation:
+    def test_missing_source_raises_file_not_found(self, tmp_path: Path) -> None:
+        missing = tmp_path / "does_not_exist"
+        with pytest.raises(FileNotFoundError):
+            sync(missing, tmp_path / "B")
+
+    def test_source_file_not_directory_raises(self, tmp_path: Path) -> None:
+        file_source = _write_text(tmp_path / "A", "i am a file")
+        with pytest.raises(NotADirectoryError):
+            sync(file_source, tmp_path / "B")
