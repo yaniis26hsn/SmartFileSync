@@ -6,7 +6,7 @@ import sys
 
 from pathlib import Path
 
-from smart_file_sync.sync import SyncAction, sync
+from smart_file_sync.sync import SyncAction, SyncStatus, sync
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -35,9 +35,29 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--dry-run",
         action="store_true",
-        help="Preview operations without modifying any files.",
+        help="Analyze files and show what would happen without modifying anything.",
     )
     return parser.parse_args(argv)
+
+
+def _format_action(action: SyncAction) -> str:
+    """Format a SyncAction into a human-readable output line.
+
+    Args:
+        action: The action to format.
+
+    Returns:
+        A single formatted line describing the operation.
+    """
+    status = action.status.ljust(10)
+    if action.status == SyncStatus.COPY:
+        return f"{status} {action.source} -> {action.destination}"
+    if action.status == SyncStatus.IDENTICAL:
+        suffix = action.message if action.message else "would delete source"
+        return f"{status} {action.source} -> {action.destination} -> {suffix}"
+    if action.status == SyncStatus.CONFLICT:
+        return f"{status} {action.source} -> {action.destination} -> files differ"
+    return f"{status} {action.source} -> {action.destination} -> {action.message}"
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -62,7 +82,7 @@ def main(argv: list[str] | None = None) -> None:
     actions: list[SyncAction] = sync(args.source, args.destination, dry_run=args.dry_run)
 
     for action in actions:
-        print(f"{action.relative_path}: {action.action}")
+        print(_format_action(action))
 
     if args.dry_run:
         print("\n--- END DRY RUN ---")
