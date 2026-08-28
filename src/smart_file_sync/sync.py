@@ -1,6 +1,6 @@
 """Core synchronization logic for Smart File Sync."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from pathlib import Path
 
@@ -15,6 +15,7 @@ class SyncStatus:
     IDENTICAL = "IDENTICAL"
     CONFLICT = "CONFLICT"
     SKIP = "SKIP"
+    ERROR = "ERROR"
 
 
 @dataclass(frozen=True)
@@ -28,6 +29,7 @@ class SyncAction:
         destination: Path to the destination file.
         is_delete: Whether this action deletes the source file.
         reason: Optional detailed explanation of why this decision was made.
+        error: A message describing a failure when status is ``ERROR``.
     """
 
     relative_path: Path
@@ -36,6 +38,25 @@ class SyncAction:
     destination: Path
     is_delete: bool = False
     reason: str = ""
+    error: str = field(default="")
+
+
+def _collect_files(source: Path) -> list[Path]:
+    """Return candidate paths under source, skipping unreadable entries.
+
+    Args:
+        source: Root directory to walk.
+
+    Returns:
+        A list of paths, which may include directories (skipped later).
+    """
+    entries: list[Path] = []
+    try:
+        for candidate in source.rglob("*"):
+            entries.append(candidate)
+    except OSError:
+        pass
+    return entries
 
 
 def sync(source: Path, destination: Path, dry_run: bool = False) -> list[SyncAction]:
@@ -50,7 +71,12 @@ def sync(source: Path, destination: Path, dry_run: bool = False) -> list[SyncAct
       source file is deleted (status ``IDENTICAL``).
     - If the files are different, neither is deleted or overwritten; the
       conflict is reported (status ``CONFLICT``).
-    - ``SKIP`` is reserved for items that are intentionally left untouched.
+    - If a file cannot be safely compared, copied, or deleted, an ``ERROR``
+      action is reported and the file is left untouched.
+
+    A source file is deleted only when the comparison returned ``IDENTICAL``,
+    which requires successful stat and hashing of both files. One problematic
+    file does not stop unrelated files from being processed.
 
     Args:
         source: Path to the source directory (A).
@@ -71,19 +97,56 @@ def sync(source: Path, destination: Path, dry_run: bool = False) -> list[SyncAct
         raise NotADirectoryError(f"Source is not a directory: {source}")
 
     actions: list[SyncAction] = []
-    for item in sorted(source.rglob("*")):
-        if item.is_dir():
+    for item in _collect_files(source):
+        relative = item.relative_to(source)
+
+        try:
+            if item.is_dir():
+                continue
+        except OSError as exc:
+            actions.append(
+                SyncAction(
+                    relative_path=relative,
+                    status=SyncStatus.ERROR,
+                    source=item,
+                    destination=destination / relative,
+                    error=f"could not inspect entry: {exc}",
+                )
+            )
             continue
 
-        relative = item.relative_to(source)
         dest_file = destination / relative
 
         comparison = _compare(item, dest_file)
         result = comparison.result
 
+        if result == CompareResult.ERROR:
+            actions.append(
+                SyncAction(
+                    relative_path=relative,
+                    status=SyncStatus.ERROR,
+                    source=item,
+                    destination=dest_file,
+                    error=comparison.error,
+                )
+            )
+            continue
+
         if result == CompareResult.IDENTICAL:
             if not dry_run:
-                delete_file(item)
+                try:
+                    delete_file(item)
+                except OSError as exc:
+                    actions.append(
+                        SyncAction(
+                            relative_path=relative,
+                            status=SyncStatus.ERROR,
+                            source=item,
+                            destination=dest_file,
+                            error=f"could not delete source file: {exc}",
+                        )
+                    )
+                    continue
             actions.append(
                 SyncAction(
                     relative_path=relative,
@@ -108,7 +171,19 @@ def sync(source: Path, destination: Path, dry_run: bool = False) -> list[SyncAct
 
         elif result == CompareResult.NEW:
             if not dry_run:
-                copy_file(item, dest_file)
+                try:
+                    copy_file(item, dest_file)
+                except OSError as exc:
+                    actions.append(
+                        SyncAction(
+                            relative_path=relative,
+                            status=SyncStatus.ERROR,
+                            source=item,
+                            destination=dest_file,
+                            error=f"could not copy source file: {exc}",
+                        )
+                    )
+                    continue
             actions.append(
                 SyncAction(
                     relative_path=relative,

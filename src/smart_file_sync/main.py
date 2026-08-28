@@ -110,6 +110,8 @@ def _format_action(action: SyncAction, verbose: bool = False) -> str:
         line = f"{base} -> {suffix}"
     elif action.status == SyncStatus.CONFLICT:
         line = f"{base} -> files differ"
+    elif action.status == SyncStatus.ERROR:
+        line = f"{base} -> ERROR: {action.error}"
     elif action.status == SyncStatus.COPY:
         line = base
     else:
@@ -232,10 +234,21 @@ def run(argv: list[str] | None = None) -> int:
 def main(argv: list[str] | None = None) -> None:
     """Command-line entry point that exits with the run result code.
 
+    Unexpected exceptions are reported as a clear message rather than a raw
+    traceback, while preserving the error exit code.
+
     Args:
         argv: Optional list of arguments to parse. Defaults to sys.argv.
     """
-    sys.exit(run(argv))
+    try:
+        code = run(argv)
+    except KeyboardInterrupt:
+        print("Interrupted.", file=sys.stderr)
+        code = 130
+    except Exception as exc:  # noqa: BLE001 - top-level safety net
+        print(f"Unexpected error: {exc}", file=sys.stderr)
+        code = EXIT_ERROR
+    sys.exit(code)
 
 
 if __name__ == "__main__":

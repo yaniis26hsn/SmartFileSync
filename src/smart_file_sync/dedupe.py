@@ -52,7 +52,10 @@ class DedupeOutcome:
 
 def _iter_files(root: Path) -> list[Path]:
     """Return all regular files under root, skipping unreadable entries."""
-    if not root.is_dir():
+    try:
+        if not root.is_dir():
+            return []
+    except OSError:
         return []
     files: list[Path] = []
     for item in root.rglob("*"):
@@ -126,11 +129,17 @@ def find_duplicates(source: Path, destination: Path) -> list[DuplicateMatch]:
 
 
 def _default_confirm(match: DuplicateMatch) -> bool:
-    """Default confirmation prompt for deleting a source file."""
-    answer = input(
-        f"Delete duplicate source '{match.source}' "
-        f"(destination '{match.destination}' is kept)? [y/N] "
-    )
+    """Default confirmation prompt for deleting a source file.
+
+    Returns False (keep the file) if no confirmation can be obtained.
+    """
+    try:
+        answer = input(
+            f"Delete duplicate source '{match.source}' "
+            f"(destination '{match.destination}' is kept)? [y/N] "
+        )
+    except (OSError, EOFError):
+        return False
     return answer.strip().lower() in ("y", "yes")
 
 
@@ -167,7 +176,7 @@ def delete_duplicates(
 
         try:
             approved = ask(match)
-        except OSError as exc:
+        except (OSError, EOFError) as exc:
             outcomes.append(
                 DedupeOutcome(match=match, deleted=False, error=str(exc))
             )
