@@ -6,7 +6,7 @@ import sys
 
 from pathlib import Path
 
-from smart_file_sync.sync import sync
+from smart_file_sync.sync import SyncAction, sync
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -59,7 +59,10 @@ def main(argv: list[str] | None = None) -> None:
     if args.dry_run:
         print("--- DRY RUN ---\n")
 
-    sync(args.source, args.destination, dry_run=args.dry_run)
+    actions: list[SyncAction] = sync(args.source, args.destination, dry_run=args.dry_run)
+
+    for action in actions:
+        print(f"{action.relative_path}: {action.action}")
 
     if args.dry_run:
         print("\n--- END DRY RUN ---")
