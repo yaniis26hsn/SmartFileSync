@@ -4,7 +4,7 @@ from dataclasses import dataclass
 
 from pathlib import Path
 
-from smart_file_sync.comparator import CompareResult, compare_files
+from smart_file_sync.comparator import CompareResult, _compare
 from smart_file_sync.operations import copy_file, delete_file
 
 
@@ -27,7 +27,7 @@ class SyncAction:
         source: Path to the source file.
         destination: Path to the destination file.
         is_delete: Whether this action deletes the source file.
-        message: Optional extra detail shown alongside the status.
+        reason: Optional detailed explanation of why this decision was made.
     """
 
     relative_path: Path
@@ -35,7 +35,7 @@ class SyncAction:
     source: Path
     destination: Path
     is_delete: bool = False
-    message: str = ""
+    reason: str = ""
 
 
 def sync(source: Path, destination: Path, dry_run: bool = False) -> list[SyncAction]:
@@ -78,7 +78,8 @@ def sync(source: Path, destination: Path, dry_run: bool = False) -> list[SyncAct
         relative = item.relative_to(source)
         dest_file = destination / relative
 
-        result = compare_files(item, dest_file)
+        comparison = _compare(item, dest_file)
+        result = comparison.result
 
         if result == CompareResult.IDENTICAL:
             if not dry_run:
@@ -90,7 +91,7 @@ def sync(source: Path, destination: Path, dry_run: bool = False) -> list[SyncAct
                     source=item,
                     destination=dest_file,
                     is_delete=True,
-                    message="would delete source" if dry_run else "deleted source",
+                    reason=comparison.reason,
                 )
             )
 
@@ -101,7 +102,7 @@ def sync(source: Path, destination: Path, dry_run: bool = False) -> list[SyncAct
                     status=SyncStatus.CONFLICT,
                     source=item,
                     destination=dest_file,
-                    message="files differ",
+                    reason=comparison.reason,
                 )
             )
 
@@ -114,6 +115,7 @@ def sync(source: Path, destination: Path, dry_run: bool = False) -> list[SyncAct
                     status=SyncStatus.COPY,
                     source=item,
                     destination=dest_file,
+                    reason=comparison.reason,
                 )
             )
 
