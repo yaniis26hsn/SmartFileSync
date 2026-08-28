@@ -1,4 +1,7 @@
 # Smart File Sync
+
+> **Warning:** This script is currently under testing. Do not use it on critical or important files. Always keep backups before running synchronization.
+
 A lightweight Python utility for safely synchronizing files between two directories.
 
 Unlike traditional file-copy operations that treat files with the same name as conflicts, **Smart File Sync compares the actual file contents**. When a file in the source directory and a file with the same name in the destination directory are identical, the source file is deleted and the destination file is kept.
