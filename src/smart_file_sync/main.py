@@ -8,6 +8,11 @@ import sys
 
 from pathlib import Path
 
+from smart_file_sync.dedupe import (
+    DedupeOutcome,
+    DuplicateMatch,
+    delete_duplicates,
+)
 from smart_file_sync.sync import SyncAction, SyncStatus, sync
 
 EXIT_OK = 0
@@ -49,6 +54,15 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--verbose",
         action="store_true",
         help="Show detailed information about each file and why it was classified.",
+    )
+    parser.add_argument(
+        "--delete-duplicates",
+        action="store_true",
+        help=(
+            "Detect source files whose contents match a destination file and "
+            "delete them after confirmation. This is a separate pass from "
+            "normal synchronization."
+        ),
     )
     return parser.parse_args(argv)
 
@@ -107,6 +121,64 @@ def _format_action(action: SyncAction, verbose: bool = False) -> str:
     return line
 
 
+def _format_duplicate(outcome: DedupeOutcome) -> str:
+    """Format a dedupe outcome into a human-readable block.
+
+    Args:
+        outcome: The outcome to format.
+
+    Returns:
+        A multi-line string describing the duplicate-content match and action.
+    """
+    match = outcome.match
+    if outcome.would_delete:
+        action = "would delete source"
+    elif outcome.deleted:
+        action = "deleted source"
+    elif outcome.error is not None:
+        action = f"error: {outcome.error}"
+    else:
+        action = "keep source (rejected)"
+
+    return (
+        f"DUPLICATE CONTENT\n"
+        f"  Source:      {match.source}\n"
+        f"  Destination: {match.destination}\n"
+        f"  Action:      {action}"
+    )
+
+
+def _run_dedupe(args: argparse.Namespace) -> int:
+    """Run the opt-in duplicate-content deletion pass.
+
+    Args:
+        args: Parsed command-line arguments.
+
+    Returns:
+        EXIT_OK on success, EXIT_ERROR on any filesystem error.
+    """
+    if args.dry_run:
+        print("--- DRY RUN ---\n")
+
+    try:
+        outcomes: list[DedupeOutcome] = delete_duplicates(
+            args.source,
+            args.destination,
+            dry_run=args.dry_run,
+        )
+    except OSError as exc:
+        print(f"Error during duplicate detection: {exc}", file=sys.stderr)
+        return EXIT_ERROR
+
+    for outcome in outcomes:
+        print(_format_duplicate(outcome))
+
+    if args.dry_run:
+        print("\n--- END DRY RUN ---")
+
+    return EXIT_OK
+
+
 def run(argv: list[str] | None = None) -> int:
     """Run the CLI and return a process exit code.
 
@@ -122,6 +194,9 @@ def run(argv: list[str] | None = None) -> int:
     if error is not None:
         print(f"Error: {error}", file=sys.stderr)
         return EXIT_ERROR
+
+    if args.delete_duplicates:
+        return _run_dedupe(args)
 
     try:
         if not args.dry_run and not args.destination.is_dir():

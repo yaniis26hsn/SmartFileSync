@@ -47,6 +47,14 @@ class TestParseArgs:
         assert ns.dry_run is True
         assert ns.verbose is True
 
+    def test_parses_delete_duplicates_flag(self) -> None:
+        ns = parse_args(["A", "B", "--delete-duplicates"])
+        assert ns.delete_duplicates is True
+
+    def test_delete_duplicates_default_off(self) -> None:
+        ns = parse_args(["A", "B"])
+        assert ns.delete_duplicates is False
+
 
 class TestValidation:
     def test_missing_source(self, tmp_path: Path) -> None:
@@ -188,3 +196,52 @@ class TestVerbose:
         run([str(a), str(b)])
         captured = capsys.readouterr().out
         assert "different size" not in captured
+
+
+class TestDedupeCLI:
+    def test_dedupe_dry_run_reports_without_deleting(
+        self, tmp_path: Path, capsys
+    ) -> None:
+        a = _make_dir(tmp_path / "A")
+        src = _write_text(a / "photos" / "photo1.jpg", "same bytes")
+        b = _make_dir(tmp_path / "B")
+        _write_text(b / "backup" / "vacation.jpg", "same bytes")
+
+        code = run([str(a), str(b), "--dry-run", "--delete-duplicates"])
+
+        captured = capsys.readouterr().out
+        assert code == EXIT_OK
+        assert "DUPLICATE CONTENT" in captured
+        assert "would delete source" in captured
+        assert src.exists()
+
+    def test_normal_sync_does_not_delete_different_name_duplicate(
+        self, tmp_path: Path
+    ) -> None:
+        """Without --delete-duplicates, same-content/different-name files are kept."""
+        a = _make_dir(tmp_path / "A")
+        src = _write_text(a / "photo1.jpg", "same bytes")
+        b = _make_dir(tmp_path / "B")
+        _write_text(b / "photo2.jpg", "same bytes")
+
+        code = run([str(a), str(b)])
+
+        assert code == EXIT_OK
+        assert src.exists()
+        assert (b / "photo1.jpg").exists()
+        assert (b / "photo2.jpg").exists()
+
+    def test_delete_duplicates_mode_skips_normal_sync_copy(
+        self, tmp_path: Path, capsys
+    ) -> None:
+        """--delete-duplicates is a separate pass; it does not run normal copy."""
+        a = _make_dir(tmp_path / "A")
+        _write_text(a / "brand.txt", "unique")
+        b = _make_dir(tmp_path / "B")
+
+        code = run([str(a), str(b), "--dry-run", "--delete-duplicates"])
+
+        captured = capsys.readouterr().out
+        assert code == EXIT_OK
+        assert not (b / "brand.txt").exists()
+        assert "COPY" not in captured
