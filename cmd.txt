@@ -1,0 +1,2 @@
+cd github\SmartFileSync
+python -m smart_file_sync "Source" "Destination"
